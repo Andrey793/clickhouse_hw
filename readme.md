@@ -57,4 +57,7 @@ Makefile             # основные команды
 - singular: сверка сумм витрины со staging, соответствие `risk_lvl` порогам;
 - unit: логика `risk_lvl`, разделение fraud / legit сумм, `risk_flag` мерчантов.
 
+### Логи тестов в test_logs.md
+
 **Качество кода:** sqlfluff (диалект ClickHouse, dbt templater) и pre-commit (`pip install pre-commit && pre-commit install`). Хуки запускают sqlfluff внутри контейнера dbt, поэтому он должен быть запущен.
+
