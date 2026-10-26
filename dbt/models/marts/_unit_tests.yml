@@ -1,0 +1,55 @@
+unit_tests:
+  - name: test_risk_lvl_thresholds
+    description: Customers get low / medium / high risk level by fraud_rate and the risk_thr_* vars.
+    model: mart_customer_risk_profile
+    overrides:
+      vars:
+        risk_thr_low: 0.3
+        risk_thr_med: 0.6
+    given:
+      - input: ref('stg_transactions')
+        rows:
+          - {name_1: anna, name_2: lee, amount: 10, target: 0}
+          - {name_1: bob, name_2: ray, amount: 20, target: 0}
+          - {name_1: bob, name_2: ray, amount: 40, target: 1}
+          - {name_1: carl, name_2: fox, amount: 5, target: 1}
+    expect:
+      rows:
+        - {name_1: anna, name_2: lee, total_trans: 1, max_amount: 10, total_amount: 10, risk_lvl: low}
+        - {name_1: bob, name_2: ray, total_trans: 2, max_amount: 40, total_amount: 60, risk_lvl: medium}
+        - {name_1: carl, name_2: fox, total_trans: 1, max_amount: 5, total_amount: 5, risk_lvl: high}
+
+  - name: test_fraud_by_category_amounts
+    description: Fraud and legit amounts are split by target within each category.
+    model: mart_fraud_by_category
+    given:
+      - input: ref('stg_transactions')
+        rows:
+          - {cat_id: travel, amount: 100, target: 1}
+          - {cat_id: travel, amount: 50, target: 0}
+          - {cat_id: travel, amount: 25, target: 0}
+          - {cat_id: home, amount: 10, target: 1}
+          - {cat_id: home, amount: 30, target: 0}
+    expect:
+      rows:
+        - {cat_id: travel, total_trans: 3, fraud_trans: 1, fraud_amount: 100, legit_amount: 75}
+        - {cat_id: home, total_trans: 2, fraud_trans: 1, fraud_amount: 10, legit_amount: 30}
+
+  - name: test_merchant_risk_flag
+    description: Only merchants with fraud_rate above the 75th percentile across merchants are flagged.
+    model: mart_merchant_analytics
+    given:
+      - input: ref('stg_transactions')
+        rows:
+          - {merch: m1, amount: 10, target: 0}
+          - {merch: m2, amount: 10, target: 0}
+          - {merch: m3, amount: 10, target: 0}
+          - {merch: m4, amount: 10, target: 0}
+          - {merch: m5, amount: 10, target: 1}
+    expect:
+      rows:
+        - {merch: m1, risk_flag: 0}
+        - {merch: m2, risk_flag: 0}
+        - {merch: m3, risk_flag: 0}
+        - {merch: m4, risk_flag: 0}
+        - {merch: m5, risk_flag: 1}

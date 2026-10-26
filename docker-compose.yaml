@@ -1,7 +1,6 @@
 services:
   kafka:
     image: apache/kafka:4.0.0
-    container_name: kafka
     ports:
       - "9092:9092"              
     environment:
@@ -52,20 +51,19 @@ services:
       KAFKA_TOPIC: csv_rows
       CSV_PATH: /app/data/train.csv          
     volumes:
-      - ./data:/app/data                     
+      - ${TRAIN_CSV:-./data/train.csv}:/app/data/train.csv:ro
     depends_on:
       kafka-init:
         condition: service_completed_successfully
 
   clickhouse:
     image: clickhouse/clickhouse-server:25.8
-    container_name: clickhouse
     ports:
       - "127.0.0.1:8123:8123"     
       - "127.0.0.1:9000:9000"     
     environment:
-      CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: secret
+      CLICKHOUSE_USER: ${CH_USER}
+      CLICKHOUSE_PASSWORD: ${CH_PASSWORD}
     volumes:
       - ./clickhouse/init:/docker-entrypoint-initdb.d   
       - clickhouse_data:/var/lib/clickhouse             
@@ -74,6 +72,19 @@ services:
     depends_on:
       kafka-init:
         condition: service_completed_successfully     
+
+  dbt:
+    build: ./dbt
+    volumes:
+      - ./dbt:/usr/app/dbt          
+    environment:
+      CH_HOST: clickhouse            
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+    depends_on:
+      - clickhouse
+    command: sleep infinity          
+
 
 volumes:
   clickhouse_data:

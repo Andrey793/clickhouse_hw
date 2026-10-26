@@ -1,0 +1,245 @@
+models:
+  - name: stg_transactions
+    description: >
+      Cleaned and deduplicated source model with one row per transaction.
+      Rows with missing time or non-positive amount, post code or city population are filtered out.
+      Materialized as a view. Used by all marts.
+    data_tests:
+      - dbt_expectations.expect_compound_columns_to_be_unique:
+          arguments:
+            column_list: [transaction_time, merch, name_1, name_2]
+    columns:
+      - name: transaction_time
+        description: Date and time of the transaction.
+        data_tests:
+          - not_null
+      - name: merch
+        description: Merchant name (lowercased and trimmed).
+        data_tests:
+          - not_null
+      - name: cat_id
+        description: Category of the purchased goods (lowercased and trimmed).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['entertainment', 'food_dining', 'gas_transport', 'grocery_net',
+                          'grocery_pos', 'health_fitness', 'home', 'kids_pets', 'misc_net',
+                          'misc_pos', 'personal_care', 'shopping_net', 'shopping_pos', 'travel']
+      - name: amount
+        description: Transaction amount. Always positive.
+        data_tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                strictly: true
+      - name: amount_segment
+        description: Quartile of the amount within its category (1 is the smallest, 4 is the largest).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3, 4]
+                quote: false
+      - name: name_1
+        description: Customer first name (lowercased).
+        data_tests:
+          - not_null
+      - name: name_2
+        description: Customer last name (lowercased).
+        data_tests:
+          - not_null
+      - name: city
+        description: Customer city (lowercased and trimmed).
+      - name: us_state
+        description: Two-letter US state code of the customer (uppercased).
+        data_tests:
+          - not_null
+      - name: post_code
+        description: Customer postal code.
+      - name: population_city
+        description: Population of the customer's city.
+      - name: lat
+        description: Customer latitude.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: -90
+                max_value: 90
+      - name: lon
+        description: Customer longitude.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: -180
+                max_value: 180
+      - name: merchant_lat
+        description: Merchant latitude.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: -90
+                max_value: 90
+      - name: merchant_lon
+        description: Merchant longitude.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: -180
+                max_value: 180
+      - name: job
+        description: Customer occupation (lowercased and trimmed).
+      - name: target
+        description: Fraud label (1 is fraud, 0 is legitimate).
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [0, 1]
+                quote: false
+
+  - name: mart_customer_risk_profile
+    description: >
+      Risk statistics for each customer. Used to track suspicious and vulnerable customers.
+      One row per customer.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [name_1, name_2]
+    columns:
+      - name: name_1
+        description: Customer first name.
+      - name: name_2
+        description: Customer last name.
+      - name: total_trans
+        description: Total number of the customer's transactions.
+      - name: max_amount
+        description: Largest transaction amount.
+      - name: total_amount
+        description: Sum of all transaction amounts.
+      - name: avg_amount
+        description: Average transaction amount.
+      - name: fraud_rate
+        description: Share of fraudulent transactions.
+      - name: risk_lvl
+        description: Risk level based on fraud_rate and the risk_thr_* vars ('low', 'medium' or 'high').
+
+  - name: mart_daily_state_metrics
+    description: >
+      Daily transaction metrics for each US state.
+      One row per state and day.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [us_state, trans_date]
+    columns:
+      - name: us_state
+        description: Two-letter US state code.
+      - name: trans_date
+        description: Transaction date.
+      - name: trans_number
+        description: Number of transactions.
+      - name: total_amount
+        description: Sum of transaction amounts.
+      - name: avg_anount
+        description: Average transaction amount.
+      - name: p95
+        description: 95th percentile of the transaction amount.
+      - name: big_trans_fraction
+        description: Share of transactions in the top amount segment (amount_segment = 4).
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1
+
+  - name: mart_fraud_by_category
+    description: >
+      Fraud statistics for each goods category.
+      One row per category.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [cat_id]
+    columns:
+      - name: cat_id
+        description: Category of the purchased goods.
+      - name: total_trans
+        description: Total number of transactions.
+      - name: fraud_trans
+        description: Number of fraudulent transactions.
+      - name: fraud_rate
+        description: Share of fraudulent transactions.
+      - name: fraud_amount
+        description: Sum of fraudulent transaction amounts.
+      - name: legit_amount
+        description: Sum of legitimate transaction amounts.
+
+  - name: mart_fraud_by_state
+    description: >
+      Fraud statistics for each US state.
+      One row per state.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [us_state]
+    columns:
+      - name: us_state
+        description: Two-letter US state code.
+      - name: fraud_rate
+        description: Share of fraudulent transactions.
+      - name: unique_merchs
+        description: Number of distinct merchants.
+      - name: unique_clients
+        description: Number of distinct customers (by first and last name).
+      - name: fraud_amount
+        description: Sum of fraudulent transaction amounts.
+      - name: legit_amount
+        description: Sum of legitimate transaction amounts.
+
+  - name: mart_hourly_fraud_pattern
+    description: >
+      Fraud pattern by day of week and hour of day.
+      One row per day of week and hour.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [day_of_week, trans_hour]
+    columns:
+      - name: day_of_week
+        description: Day of week of the transaction.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 1
+                max_value: 7
+      - name: trans_hour
+        description: Hour of day of the transaction (0-23).
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 23
+      - name: fraud_rate
+        description: Share of fraudulent transactions.
+      - name: fraud_amount
+        description: Sum of fraudulent transaction amounts.
+
+  - name: mart_merchant_analytics
+    description: >
+      Transaction volume and fraud risk for each merchant.
+      One row per merchant.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [merch]
+    columns:
+      - name: merch
+        description: Merchant name.
+      - name: total_amount
+        description: Sum of transaction amounts.
+      - name: fraud_rate
+        description: Share of fraudulent transactions.
+      - name: risk_flag
+        description: True if the merchant's fraud_rate is above the 75th percentile across all merchants.
