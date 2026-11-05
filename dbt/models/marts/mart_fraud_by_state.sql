@@ -4,9 +4,13 @@
 
 select
     us_state,
+    concat('US-', us_state) as state_iso,
+    count() as total_trans,
+    countIf(target = 1) as fraud_trans,
     avg(target = 1) as fraud_rate,
     uniqExact(merch) as unique_merchs,
     uniqExact(name_1, name_2) as unique_clients,
+    sum(amount) as total_amount,
     sum(amount) filter (where target = 1) as fraud_amount,
     sum(amount) filter (where target = 0) as legit_amount
 from {{ ref("stg_transactions") }}

@@ -101,7 +101,8 @@ models:
 
   - name: mart_customer_risk_profile
     description: >
-      Risk statistics for each customer. Used to track suspicious and vulnerable customers.
+      Risk statistics and latest profile attributes for each customer.
+      Used to track suspicious and vulnerable customers.
       One row per customer.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
@@ -112,22 +113,46 @@ models:
         description: Customer first name.
       - name: name_2
         description: Customer last name.
+      - name: customer
+        description: Full customer name ("first last"), for chart labels.
+      - name: us_state
+        description: Customer state from the latest transaction.
+      - name: city
+        description: Customer city from the latest transaction.
+      - name: job
+        description: Customer occupation from the latest transaction.
+      - name: lat
+        description: Customer latitude from the latest transaction.
+      - name: lon
+        description: Customer longitude from the latest transaction.
+      - name: first_trans_time
+        description: Time of the customer's first transaction.
+      - name: last_trans_time
+        description: Time of the customer's latest transaction.
       - name: total_trans
         description: Total number of the customer's transactions.
+      - name: fraud_trans
+        description: Number of the customer's fraudulent transactions.
       - name: max_amount
         description: Largest transaction amount.
       - name: total_amount
         description: Sum of all transaction amounts.
+      - name: fraud_amount
+        description: Sum of fraudulent transaction amounts.
       - name: avg_amount
         description: Average transaction amount.
       - name: fraud_rate
         description: Share of fraudulent transactions.
       - name: risk_lvl
         description: Risk level based on fraud_rate and the risk_thr_* vars ('low', 'medium' or 'high').
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['low', 'medium', 'high']
 
   - name: mart_daily_state_metrics
     description: >
-      Daily transaction metrics for each US state.
+      Daily transaction and fraud metrics for each US state.
       One row per state and day.
     data_tests:
       - dbt_utils.unique_combination_of_columns:
@@ -136,13 +161,26 @@ models:
     columns:
       - name: us_state
         description: Two-letter US state code.
+      - name: state_iso
+        description: ISO 3166-2 state code (e.g. US-CA), as the Superset Country Map expects.
       - name: trans_date
         description: Transaction date.
       - name: trans_number
         description: Number of transactions.
+      - name: fraud_trans
+        description: Number of fraudulent transactions.
+      - name: fraud_rate
+        description: Share of fraudulent transactions.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0
+                max_value: 1
       - name: total_amount
         description: Sum of transaction amounts.
-      - name: avg_anount
+      - name: fraud_amount
+        description: Sum of fraudulent transaction amounts.
+      - name: avg_amount
         description: Average transaction amount.
       - name: p95
         description: 95th percentile of the transaction amount.
@@ -165,12 +203,24 @@ models:
     columns:
       - name: cat_id
         description: Category of the purchased goods.
+      - name: channel
+        description: Sales channel derived from the category suffix ('online' for *_net, otherwise 'offline').
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['online', 'offline']
       - name: total_trans
         description: Total number of transactions.
       - name: fraud_trans
         description: Number of fraudulent transactions.
       - name: fraud_rate
         description: Share of fraudulent transactions.
+      - name: total_amount
+        description: Sum of all transaction amounts.
+      - name: avg_amount
+        description: Average transaction amount.
+      - name: avg_fraud_amount
+        description: Average amount of a fraudulent transaction.
       - name: fraud_amount
         description: Sum of fraudulent transaction amounts.
       - name: legit_amount
@@ -187,12 +237,20 @@ models:
     columns:
       - name: us_state
         description: Two-letter US state code.
+      - name: state_iso
+        description: ISO 3166-2 state code (e.g. US-CA), as the Superset Country Map expects.
+      - name: total_trans
+        description: Total number of transactions.
+      - name: fraud_trans
+        description: Number of fraudulent transactions.
       - name: fraud_rate
         description: Share of fraudulent transactions.
       - name: unique_merchs
         description: Number of distinct merchants.
       - name: unique_clients
         description: Number of distinct customers (by first and last name).
+      - name: total_amount
+        description: Sum of all transaction amounts.
       - name: fraud_amount
         description: Sum of fraudulent transaction amounts.
       - name: legit_amount
@@ -208,12 +266,14 @@ models:
             combination_of_columns: [day_of_week, trans_hour]
     columns:
       - name: day_of_week
-        description: Day of week of the transaction.
+        description: ISO day of week of the transaction (1 is Monday, 7 is Sunday).
         data_tests:
           - dbt_expectations.expect_column_values_to_be_between:
               arguments:
                 min_value: 1
                 max_value: 7
+      - name: day_label
+        description: Day of week label ("1 Monday" ... "7 Sunday") that sorts correctly as text.
       - name: trans_hour
         description: Hour of day of the transaction (0-23).
         data_tests:
@@ -221,6 +281,10 @@ models:
               arguments:
                 min_value: 0
                 max_value: 23
+      - name: total_trans
+        description: Total number of transactions.
+      - name: fraud_trans
+        description: Number of fraudulent transactions.
       - name: fraud_rate
         description: Share of fraudulent transactions.
       - name: fraud_amount
@@ -237,9 +301,63 @@ models:
     columns:
       - name: merch
         description: Merchant name.
+      - name: main_category
+        description: Most frequent goods category of the merchant.
+      - name: merchant_lat
+        description: Average merchant latitude across its transactions.
+      - name: merchant_lon
+        description: Average merchant longitude across its transactions.
+      - name: total_trans
+        description: Total number of transactions.
+      - name: fraud_trans
+        description: Number of fraudulent transactions.
       - name: total_amount
         description: Sum of transaction amounts.
+      - name: fraud_amount
+        description: Sum of fraudulent transaction amounts.
+      - name: avg_amount
+        description: Average transaction amount.
       - name: fraud_rate
         description: Share of fraudulent transactions.
       - name: risk_flag
         description: True if the merchant's fraud_rate is above the 75th percentile across all merchants.
+      - name: risk_label
+        description: Human-readable risk_flag ('high risk' or 'normal'), for chart legends.
+
+  - name: mart_fraud_transactions_geo
+    description: >
+      Fraudulent transactions with customer and merchant coordinates.
+      Used for map visualizations. One row per fraudulent transaction.
+    columns:
+      - name: transaction_time
+        description: Date and time of the transaction.
+        data_tests:
+          - not_null
+      - name: merch
+        description: Merchant name.
+      - name: cat_id
+        description: Category of the purchased goods.
+      - name: amount
+        description: Transaction amount.
+      - name: us_state
+        description: Two-letter US state code of the customer.
+      - name: city
+        description: Customer city.
+      - name: customer_lat
+        description: Customer latitude.
+      - name: customer_lon
+        description: Customer longitude.
+      - name: merchant_lat
+        description: Merchant latitude.
+      - name: merchant_lon
+        description: Merchant longitude.
+      - name: trans_date
+        description: Transaction date.
+      - name: customer
+        description: Full customer name ("first last").
+      - name: distance_km
+        description: Great-circle distance between customer and merchant, in km.
+        data_tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              arguments:
+                min_value: 0

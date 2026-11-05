@@ -1,68 +1,90 @@
-Репозиторий состоит из 2 веток.
+# Fraud Analytics: Kafka → ClickHouse → dbt → Superset
 
-1. Main. Содержит базовую логику создания Clickhouse таблицы из потока транзакций из csv.
-2. dbt. Дополняет первую версию dbt staging и marts моделями. Также содержит тесты для этих моделей.
+End-to-end аналитика мошеннических карточных транзакций: стриминговая загрузка, витрины на dbt
+и BI-дашборды в Superset. Весь стек поднимается локально одной командой через Docker Compose.
 
-# Fraud transactions: Kafka → ClickHouse → dbt
+**Данные:** 786 тыс. транзакций, январь 2019 – март 2020, 4 504 случая fraud.
 
-Стриминговая загрузка транзакций из CSV в ClickHouse через Kafka и аналитические витрины на dbt.
+## Дашборды
 
-dbt-core=1.10.*; dbt-clickhouse=1.10.3
+![Superset dashboards demo: native filters and cross-filtering](docs/img/dashboard-demo.gif)
+
+### Fraud Executive Overview
+KPI, динамика объёма и fraud rate, карта штатов, потери по категориям.
+
+![Fraud Executive Overview](docs/img/dashboard-fraud-overview.png)
+
+### When Does Fraud Happen?
+Heatmap «день недели × час», fraud rate по часам, online vs offline.
+
+![When Does Fraud Happen](docs/img/dashboard-fraud-patterns.png)
+
+### Merchant & Category Risk
+Карта риска мерчантов, структура объёма, размер fraud-чеков, топ рискованных мерчантов.
+
+![Merchant & Category Risk](docs/img/dashboard-merchant-risk.png)
+
+### Customer Risk & Fraud Geography
+Сегментация клиентов по риску, расстояние «дом → мерчант», карта fraud-потоков.
+
+![Customer Risk & Fraud Geography](docs/img/dashboard-customer-risk.png)
+
+## Архитектура
+
 ```
-train.csv → producer (Python) → Kafka (csv_rows) → ClickHouse Kafka engine → MV → default.csv_rows → dbt
+train.csv → producer (Python) → Kafka → ClickHouse (Kafka engine + MV) → dbt (staging → marts) → Superset
 ```
+
+| Слой | Технологии | Что делает |
+|---|---|---|
+| Ingestion | Python, Kafka | producer построчно отправляет CSV в топик как JSON |
+| Storage | ClickHouse | Kafka engine + materialized view пишут в MergeTree-таблицу с кодеками сжатия |
+| Transform | dbt-clickhouse | очистка, нормализация, дедупликация; 7 витрин под задачи BI |
+| BI | Apache Superset | 4 дашборда, 21 график, native-фильтры и cross-filtering |
+
+### dbt
+
+Staging-модель очищает и дедуплицирует сырые транзакции. На ней строятся 7 витрин под дашборды:
+по штатам, категориям, мерчантам, клиентам, времени суток и география fraud.
+Описания всех колонок лежат в [`schema.yml`](dbt/models/schema.yml).
+
+![dbt DAG](dbt_dag.png)
+
+**Качество данных:** 37 тестов (`dbt_utils`, `dbt_expectations`, unit-тесты бизнес-логики,
+сверка сумм витрин со staging), линтинг SQL через sqlfluff в pre-commit.
+
+## Запуск
+
+Нужны Docker с Compose и файл `train.csv`.
+
+1. Создайте `.env` из шаблона и заполните пароли и путь до `train.csv`:
+   ```bash
+   cp .env.example .env
+   ```
+2. Поднимите сервисы и соберите витрины:
+   ```bash
+   make up      # kafka, producer, clickhouse, dbt, superset
+   make deps    # dbt-пакеты
+   make build   # модели и тесты в порядке DAG
+   ```
+3. Импортируйте дашборды в Superset:
+   1. Откройте http://localhost:8088 и войдите как `admin` с паролем `SUPERSET_ADMIN_PASSWORD` из `.env`.
+   2. **Dashboards - Import**  - выберите [`superset/dashboards.zip`](superset/dashboards.zip).
+
+Остальные команды: `make run`, `make test`, `make lint`, `make down`. Выбор моделей: `make build s=mart_fraud_by_state`.
 
 ## Структура
 
 ```
-producer/            # читает train.csv и пишет строки в Kafka как JSON
-clickhouse/init/     # таблица csv_rows, Kafka engine и materialized view
+producer/            # Kafka producer: CSV → JSON-сообщения
+clickhouse/init/     # таблица, Kafka engine и materialized view
 dbt/
-  models/staging/    # stg_transactions: очистка, нормализация, дедупликация
-  models/marts/      # 6 витрин + unit-тесты
+  models/staging/    # stg_transactions
+  models/marts/      # 7 витрин + unit-тесты
   models/schema.yml  # описания колонок и data-тесты
   tests/             # singular-тесты
-  macros/            # segment_by_quantile — квантильный сегмент суммы
-docker-compose.yaml  # kafka, producer, clickhouse, dbt
-Makefile             # основные команды
+  macros/            # segment_by_quantile
+superset/
+  dashboards.zip     # экспорт дашбордов для импорта через UI
+docs/img/            # скриншоты и GIF дашбордов
 ```
-
-## Запуск
-
-1. Создайте `.env` из шаблона и заполните логин, пароль ClickHouse и путь до `train.csv`:
-   ```bash
-   cp .env.example .env
-   ```
-2. Поднимите сервисы и соберите dbt-проект:
-   ```bash
-   make up      # kafka, producer, clickhouse, dbt
-   make deps    # dbt пакеты
-   make build   # модели + тесты в порядке DAG
-   ```
-
-Остальные команды: `make run`, `make test`, `make lint`, `make fix`, `make down`. Выбор моделей: `make test s=stg_transactions`.
-
-## dbt
-
-![dbt DAG](dbt_dag.png)
-
-| Модель | Гранулярность | Содержание |
-|---|---|---|
-| `stg_transactions` (view) | транзакция | фильтрация, нормализация строк, `amount_segment`, дедупликация |
-| `mart_customer_risk_profile` | клиент | суммы, fraud rate, уровень риска (`risk_thr_*` vars) |
-| `mart_daily_state_metrics` | штат × день | число транзакций, суммы, p95, доля крупных |
-| `mart_fraud_by_category` | категория | fraud rate, суммы fraud / legit |
-| `mart_fraud_by_state` | штат | fraud rate, уникальные мерчанты и клиенты |
-| `mart_hourly_fraud_pattern` | день недели × час | fraud rate и сумма по времени |
-| `mart_merchant_analytics` | мерчант | fraud rate и флаг риска (> 75-го перцентиля) |
-
-**Тесты**
-- staging: `not_null`, `accepted_values`, `dbt_expectations` (уникальность ключа дедупликации, диапазоны `amount` и координат);
-- marts: `dbt_utils.unique_combination_of_columns` на гранулярность, диапазоны долей и часов;
-- singular: сверка сумм витрины со staging, соответствие `risk_lvl` порогам;
-- unit: логика `risk_lvl`, разделение fraud / legit сумм, `risk_flag` мерчантов.
-
-### Логи тестов в test_logs.md
-
-**Качество кода:** sqlfluff (диалект ClickHouse, dbt templater) и pre-commit (`pip install pre-commit && pre-commit install`). Хуки запускают sqlfluff внутри контейнера dbt, поэтому он должен быть запущен.
-

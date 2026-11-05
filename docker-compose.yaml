@@ -1,3 +1,19 @@
+x-superset-common: &superset-common
+  build: ./superset
+  image: superset-clickhouse:6.1.0         
+  environment: &superset-env
+    SUPERSET_SECRET_KEY: ${SUPERSET_SECRET_KEY}
+    SUPERSET_CONFIG_PATH: /app/superset_config.py
+    SUPERSET_DB_USER: ${SUPERSET_DB_USER}
+    SUPERSET_DB_PASSWORD: ${SUPERSET_DB_PASSWORD}
+    SUPERSET_DB_NAME: ${SUPERSET_DB_NAME}
+  volumes:
+    - ./superset/superset_config.py:/app/superset_config.py:ro
+  depends_on:
+    superset-db:
+      condition: service_healthy
+
+
 services:
   kafka:
     image: apache/kafka:4.0.0
@@ -83,8 +99,51 @@ services:
       CH_PASSWORD: ${CH_PASSWORD}
     depends_on:
       - clickhouse
-    command: sleep infinity          
+    command: sleep infinity  
+
+  superset-db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${SUPERSET_DB_USER}
+      POSTGRES_PASSWORD: ${SUPERSET_DB_PASSWORD}
+      POSTGRES_DB: ${SUPERSET_DB_NAME}
+    volumes:
+      - superset_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${SUPERSET_DB_USER} -d ${SUPERSET_DB_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  superset-init:
+    <<: *superset-common
+    environment:
+      <<: *superset-env
+      SUPERSET_ADMIN_PASSWORD: ${SUPERSET_ADMIN_PASSWORD}
+      CH_USER: ${CH_USER}
+      CH_PASSWORD: ${CH_PASSWORD}
+    volumes:
+      - ./superset/superset_config.py:/app/superset_config.py:ro
+      - ./superset/init_clickhouse_connection.py:/app/init_clickhouse_connection.py:ro
+    command: >
+      bash -c "superset db upgrade &&
+      (superset fab create-admin --username admin --firstname Admin --lastname User --email admin@example.com --password \"$$SUPERSET_ADMIN_PASSWORD\" || true) &&
+      superset init &&
+      python /app/init_clickhouse_connection.py"
+
+  superset:
+    <<: *superset-common
+    ports:
+      - "8088:8088"
+    depends_on:
+      superset-db:
+        condition: service_healthy
+      superset-init:
+        condition: service_completed_successfully
+      clickhouse:
+        condition: service_started
 
 
 volumes:
   clickhouse_data:
+  superset_db_data:
